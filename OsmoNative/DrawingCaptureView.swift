@@ -8,6 +8,7 @@ struct DrawingCaptureView: View {
     @State private var showingGameView = false
     @State private var capturedImage: UIImage?
     @State private var isCapturing = false
+    @State private var showingProcessingOptions = false
     
     var body: some View {
         ZStack {
@@ -49,6 +50,14 @@ struct DrawingCaptureView: View {
                     .overlay(alignment: .bottom) {
                         captureButton
                     }
+                    .overlay(alignment: .topLeading) {
+                        processingOptionsButton
+                    }
+                    .overlay(alignment: .center) {
+                        if showingProcessingOptions {
+                            processingOptionsPanel
+                        }
+                    }
             }
         }
         .onAppear {
@@ -87,6 +96,94 @@ struct DrawingCaptureView: View {
         }
         .disabled(isCapturing)
         .padding(.bottom, 30)
+    }
+    
+    private var processingOptionsButton: some View {
+        Button(action: {
+            showingProcessingOptions.toggle()
+        }) {
+            Image(systemName: "gearshape.fill")
+                .font(.title2)
+                .foregroundColor(.white)
+                .background(Circle().fill(Color.black.opacity(0.7)))
+                .padding(8)
+        }
+        .padding(.top, 60)  // Account for safe area
+        .padding(.leading, 20)
+    }
+    
+    private var processingOptionsPanel: some View {
+        VStack(spacing: 20) {
+            Text("Processing Mode")
+                .font(.headline)
+                .foregroundColor(.white)
+            
+            VStack(spacing: 12) {
+                ForEach([
+                    (ImageProcessingMode.raw, "📷", "Raw", "No processing"),
+                    (ImageProcessingMode.enhanced, "✨", "Enhanced", "Better colors & clarity"),
+                    (ImageProcessingMode.drawing, "✏️", "Drawing", "Optimized for pen/pencil"),
+                    (ImageProcessingMode.adaptive, "🤖", "Smart", "Auto-adjusts to lighting")
+                ], id: \.0) { mode, icon, title, description in
+                    processingModeButton(
+                        mode: mode,
+                        icon: icon,
+                        title: title,
+                        description: description,
+                        isSelected: viewModel.processingMode == mode
+                    )
+                }
+            }
+            
+            Button("Done") {
+                showingProcessingOptions = false
+            }
+            .font(.headline)
+            .foregroundColor(.blue)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(Color.white)
+            .cornerRadius(10)
+        }
+        .padding(20)
+        .background(Color.black.opacity(0.8))
+        .cornerRadius(15)
+        .frame(maxWidth: 320)
+    }
+    
+    private func processingModeButton(mode: ImageProcessingMode, icon: String, title: String, description: String, isSelected: Bool) -> some View {
+        Button(action: {
+            viewModel.setProcessingMode(mode)
+        }) {
+            HStack {
+                Text(icon)
+                    .font(.title2)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    Text(description)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                
+                Spacer()
+                
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.title2)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? Color.blue.opacity(0.3) : Color.gray.opacity(0.2))
+                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+            )
+        }
     }
     
     private func captureDrawing() {

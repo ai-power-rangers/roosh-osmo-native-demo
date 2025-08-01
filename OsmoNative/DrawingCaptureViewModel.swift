@@ -4,6 +4,14 @@ import Vision
 import CoreImage
 import CoreImage.CIFilterBuiltins
 
+// MARK: - Processing Mode Enum
+enum ImageProcessingMode {
+    case raw              // No processing, just crop
+    case enhanced         // Light enhancement while preserving color
+    case drawing          // Optimized for pen/pencil drawings
+    case adaptive         // Smart processing based on image analysis
+}
+
 @Observable
 class DrawingCaptureViewModel: NSObject {
     let captureSession = AVCaptureSession()
@@ -11,6 +19,7 @@ class DrawingCaptureViewModel: NSObject {
     private var captureCompletionHandler: ((UIImage) -> Void)?
     
     var showingPermissionAlert = false
+    var processingMode: ImageProcessingMode = .enhanced // Default to enhanced mode
     
     override init() {
         super.init()
@@ -86,38 +95,153 @@ class DrawingCaptureViewModel: NSObject {
     }
     
     func processDrawing(from image: UIImage) -> UIImage? {
-        guard let ciImage = CIImage(image: image) else { return nil }
+        guard let ciImage = CIImage(image: image) else { 
+            print("❌ Failed to create CIImage from UIImage")
+            return nil 
+        }
         
+        print("🔄 Processing image with mode: \(processingMode)")
         let context = CIContext()
         
-        // Apply filters to isolate the drawing
-        let processedImage = ciImage
-            .applyingFilter("CIColorControls", parameters: [
-                kCIInputSaturationKey: 0.0,  // Convert to grayscale
-                kCIInputContrastKey: 2.0,     // Increase contrast
-                kCIInputBrightnessKey: 0.2    // Adjust brightness
-            ])
+        // Process based on selected mode
+        let processedImage: CIImage
         
-        // Apply threshold to create binary image
-        let thresholdFilter = CIFilter(name: "CIColorThreshold")!
-        thresholdFilter.setValue(processedImage, forKey: kCIInputImageKey)
-        thresholdFilter.setValue(0.4, forKey: "inputThreshold")
+        switch processingMode {
+        case .raw:
+            // No processing, just use original
+            processedImage = ciImage
+            
+        case .enhanced:
+            // Light enhancement while preserving color and detail
+            processedImage = ciImage
+                .applyingFilter("CIColorControls", parameters: [
+                    kCIInputSaturationKey: 1.1,     // Slightly boost saturation
+                    kCIInputContrastKey: 1.3,       // Gentle contrast boost
+                    kCIInputBrightnessKey: 0.1      // Slight brightness increase
+                ])
+                .applyingFilter("CISharpenLuminance", parameters: [
+                    kCIInputSharpnessKey: 0.5       // Light sharpening
+                ])
+            
+        case .drawing:
+            // Optimized for pen/pencil drawings - more aggressive but still preserves some color
+            processedImage = ciImage
+                .applyingFilter("CIColorControls", parameters: [
+                    kCIInputSaturationKey: 0.3,     // Reduce but don't eliminate color
+                    kCIInputContrastKey: 1.8,       // High contrast for line clarity
+                    kCIInputBrightnessKey: 0.15     // Modest brightness boost
+                ])
+                .applyingFilter("CISharpenLuminance", parameters: [
+                    kCIInputSharpnessKey: 1.0       // More aggressive sharpening
+                ])
+            
+        case .adaptive:
+            // Smart processing based on image brightness analysis
+            processedImage = adaptiveProcessing(for: ciImage)
+        }
         
-        guard let outputImage = thresholdFilter.outputImage,
-              let cgImage = context.createCGImage(outputImage, from: outputImage.extent) else {
+        // Smart cropping - find the optimal region
+        let croppedImage = smartCrop(image: processedImage, context: context)
+        
+        guard let cgImage = context.createCGImage(croppedImage, from: croppedImage.extent) else {
+            print("❌ Failed to create CGImage from processed CIImage")
             return image
         }
         
-        // Extract the drawing area (center 300x300 region)
-        let drawingRect = CGRect(
-            x: (cgImage.width - 600) / 2,
-            y: (cgImage.height - 600) / 2,
-            width: 600,
-            height: 600
+        print("✅ Successfully processed image")
+        return UIImage(cgImage: cgImage)
+    }
+    
+    // MARK: - Smart Processing Methods
+    
+    private func adaptiveProcessing(for ciImage: CIImage) -> CIImage {
+        // Analyze image brightness to determine optimal processing
+        let brightnessFilter = CIFilter(name: "CIAreaAverage")!
+        brightnessFilter.setValue(ciImage, forKey: kCIInputImageKey)
+        brightnessFilter.setValue(CIVector(cgRect: ciImage.extent), forKey: kCIInputExtentKey)
+        
+        guard let outputImage = brightnessFilter.outputImage else {
+            print("⚠️ Brightness analysis failed, using enhanced mode")
+            return ciImage.applyingFilter("CIColorControls", parameters: [
+                kCIInputContrastKey: 1.3,
+                kCIInputBrightnessKey: 0.1
+            ])
+        }
+        
+        // Extract brightness value (simplified approach)
+        let context = CIContext()
+        var bitmap = [UInt8](repeating: 0, count: 4)
+        context.render(outputImage, toBitmap: &bitmap, rowBytes: 4, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBA8, colorSpace: nil)
+        
+        let brightness = Float(bitmap[0]) / 255.0
+        print("📊 Image brightness: \(brightness)")
+        
+        // Adjust processing based on brightness
+        if brightness < 0.3 {
+            // Dark image - boost brightness more
+            print("🌑 Dark image detected - boosting brightness")
+            return ciImage.applyingFilter("CIColorControls", parameters: [
+                kCIInputSaturationKey: 1.2,
+                kCIInputContrastKey: 1.5,
+                kCIInputBrightnessKey: 0.3
+            ])
+        } else if brightness > 0.7 {
+            // Bright image - reduce brightness, increase contrast
+            print("☀️ Bright image detected - reducing brightness")
+            return ciImage.applyingFilter("CIColorControls", parameters: [
+                kCIInputSaturationKey: 0.9,
+                kCIInputContrastKey: 1.4,
+                kCIInputBrightnessKey: -0.1
+            ])
+        } else {
+            // Well-lit image - standard enhancement
+            print("💡 Well-lit image - standard enhancement")
+            return ciImage.applyingFilter("CIColorControls", parameters: [
+                kCIInputSaturationKey: 1.1,
+                kCIInputContrastKey: 1.3,
+                kCIInputBrightnessKey: 0.1
+            ])
+        }
+    }
+    
+    private func smartCrop(image: CIImage, context: CIContext) -> CIImage {
+        let originalSize = image.extent
+        
+        // Calculate crop size as percentage of image (more flexible than fixed 600px)
+        let cropPercentage: CGFloat = 0.7  // Use 70% of the smaller dimension
+        let smallerDimension = min(originalSize.width, originalSize.height)
+        let cropSize = smallerDimension * cropPercentage
+        
+        // Center the crop region
+        let cropRect = CGRect(
+            x: (originalSize.width - cropSize) / 2,
+            y: (originalSize.height - cropSize) / 2,
+            width: cropSize,
+            height: cropSize
         )
         
-        if let croppedCGImage = cgImage.cropping(to: drawingRect) {
-            return UIImage(cgImage: croppedCGImage)
+        print("📐 Cropping to rect: \(cropRect) from original: \(originalSize)")
+        
+        return image.cropped(to: cropRect)
+    }
+    
+    // MARK: - Public Interface Methods
+    
+    /// Sets the processing mode for captured images
+    func setProcessingMode(_ mode: ImageProcessingMode) {
+        print("🔧 Switching processing mode to: \(mode)")
+        processingMode = mode
+    }
+    
+    /// Returns an unprocessed, cropped version of the image for comparison
+    func getUnprocessedImage(from image: UIImage) -> UIImage? {
+        guard let ciImage = CIImage(image: image) else { return nil }
+        
+        let context = CIContext()
+        let croppedImage = smartCrop(image: ciImage, context: context)
+        
+        guard let cgImage = context.createCGImage(croppedImage, from: croppedImage.extent) else {
+            return image
         }
         
         return UIImage(cgImage: cgImage)

@@ -23,6 +23,13 @@ struct ContentView: View {
                     Image(systemName: "pencil.and.outline")
                     Text("Draw")
                 }
+            
+            // Tangram Game Tab
+            TangramGameView()
+                .tabItem {
+                    Image(systemName: "square.3.layers.3d")
+                    Text("Tangram")
+                }
         }
         .onAppear {
             print("🚀 TabView ContentView appeared")
